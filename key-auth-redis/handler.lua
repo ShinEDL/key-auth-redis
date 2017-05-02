@@ -83,7 +83,6 @@ end
 
 -- 注册指定用户名的consumer的key(token)
 local function post_consumer_key(username, key)
-  --local rows, err = crud.find_by_id_or_field(singletons.dao.consumers, {}, username, "username")
   local filter = {}
   filter.id = nil
   filter["username"] = username
