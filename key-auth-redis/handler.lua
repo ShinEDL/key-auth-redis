@@ -167,7 +167,7 @@ local function do_authentication(conf)
   if not credential then
     -- 查询redis
     local cred, err = red:get(key)
-    if not cred then
+    if not cred or type(cred) ~= "string" then
       return false, {status = 403, message = "Invalid authentication credentials"}
     else
       -- 有凭证，则存入数据库

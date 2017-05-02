@@ -20,3 +20,5 @@ key-auth插件连接redis，加强权限验证能力。
 ## 待验证
 
 1. 在headers中，是否可以获取key-name?
+2. 能否连接多个redis？
+3. token超时更换新token
