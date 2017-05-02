@@ -1,2 +1,2 @@
 # key-auth-redis
-key-auth(kong plugins) with redis
+key-auth(a plugin of kong) with redis
