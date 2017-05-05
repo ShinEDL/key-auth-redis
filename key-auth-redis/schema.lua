@@ -51,6 +51,18 @@ return {
     redis_host = { type = "string", required = true },
     redis_port = { type = "number", default = 6379 },
     redis_password = { type = "string" },
-    redis_timeout = { type = "number", default = 2000 }
+    redis_timeout = { type = "number", default = 2000 },
+    rate_limiting = {type = "boolean", default = false},
+    second = { type = "number"},
+    minute = { type = "number"},
+    hour = { type = "number"},
+    day = { type = "number"},
+    month = { type = "number"},
+    year = { type = "number"},
+    limit_by = { type = "string", enum = {"consumer", "credential", "ip"}, default = "consumer" },
+    policy = { type = "string", enum = {"local", "cluster", "redis"}, default = "cluster" },
+    fault_tolerant = { type = "boolean", default = true },
+    redis_database = { type = "number", default = 0 },
+    apiname_uri_lastest = {type = "boolean", default = false}
   }
 }

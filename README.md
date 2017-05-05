@@ -4,9 +4,11 @@ key-auth(a plugin of kong) with redis
 Base on kong 0.10.1 
 
 ## 说明
-key-auth插件连接redis，加强权限验证能力。
+1. key-auth插件连接redis，加强权限验证能力。
 
+2. 为consumer生成rate-limiting插件。
 
+详见：[key-auth-redis.md](./key-auth-redis.md)
 
 ## 数据格式
 
@@ -22,3 +24,4 @@ key-auth插件连接redis，加强权限验证能力。
 1. 在headers中，是否可以获取key-name?
 2. 能否连接多个redis？
 3. token超时更换新token
+

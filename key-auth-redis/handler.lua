@@ -16,6 +16,9 @@ local _realm = 'Key realm="'.._KONG._NAME..'"'
 local redis = require "resty.redis"
 -- 引入crud模块
 local crud = require "kong.api.crud_helpers"
+-- reports utils
+local reports = require "kong.core.reports"
+local utils = require "kong.tools.utils"
 
 local KeyAuthHandler = BasePlugin:extend()
 
@@ -81,33 +84,119 @@ local function connect_to_redis(conf)
   return red
 end
 
--- 注册指定用户名的consumer的key(token)
-local function post_consumer_key(username, key)
+-- 通过username获取consumer id
+local function get_consumer_id_by_name(username)
   local filter = {}
   filter.id = nil
   filter["username"] = username
   local rows, err = singletons.dao.consumers:find_all(filter)
   if err then
     -- error log
-    ngx.log(ngx.ERR, "post_consumer_key consumers find_all error: ", err)
+    ngx.log(ngx.ERR, "get_consumer_id_by_name consumers find_all error: ", err)
     return 
   end
 
   local consumer = rows[1]
   if not consumer then
-    return helpers.responses.send_HTTP_NOT_FOUND()
+    return nil, "consumer not found"
+  end
+  return consumer.id
+end 
+
+-- 通过API name 获取API ID
+local function get_api_id_by_name(api_name)
+  local filter = {}
+  filter.id = nil
+  filter["name"] = api_name
+  local rows, err = singletons.dao.apis:find_all(filter)
+  if err then
+    -- error log
+    ngx.log(ngx.ERR, "get_api_id_by_name consumers find_all error: ", err)
+    return 
   end
 
+  local api = rows[1]
+  if not api then
+    return nil, "api no found"
+  end
+  return api.id
+end 
+
+-- 添加rate-limiting插件
+local function set_rate_limiting_plugin(conf, username, api_name)
+  if conf.rate_limiting then
+    local consumer_id, consumer_err = get_consumer_id_by_name(username)
+    if consumer_err then 
+      return nil, consumer_err
+    end
+    local config = {}
+    if conf.second then
+      config.second = conf.second
+    end
+    if conf.minute then
+      config.minute = conf.minute
+    end
+    if conf.hour then
+      config.hour = conf.hour
+    end
+    if conf.day then
+      config.day = conf.day
+    end
+    if conf.month then
+      config.month = conf.month
+    end
+    if conf.year then
+      config.year = conf.year
+    end
+    config.fault_tolerant = conf.fault_tolerant
+    config.limit_by = conf.limit_by
+    config.policy = conf.policy
+    config.redis_database = conf.redis_database
+    config.redis_timeout = conf.redis_timeout
+    config.redis_password = conf.redis_password
+    config.redis_host = conf.redis_host
+    config.redis_port = conf.redis_port
+    local params = {}
+    params.name = "rate-limiting"
+    params.consumer_id = consumer_id
+    params.config = config
+    if api_name ~= nil then
+      local api_id, api_err = get_api_id_by_name(api_name)
+      if api_err then
+        return nil, api_err
+      end
+      params.api_id = api_id
+    end
+    local data, data_err = singletons.dao.plugins:insert(params)
+    if data_err then
+      return nil, data_err
+    end
+    reports.send("api", utils.deep_copy(data))
+  end 
+  return true
+end
+
+-- 注册指定用户名的consumer的key(token)
+local function post_consumer_key(conf, username, key, api_name)
+  local consumer_id, err = get_consumer_id_by_name(username)
+  if err then 
+    return err
+  end
   local params = {}
-  params.consumer_id = consumer.id
+  params.consumer_id = consumer_id
   params.key = key
   local data, data_err = singletons.dao.keyauth_credentials:insert(params)
   if data_err then
     ngx.log(ngx.ERR, "post_consumer_key keyauth_credentials insert error: ", data_err)
+  else
+    local ok, err = set_rate_limiting_plugin(conf, username, api_name)
+    if err then
+      ngx.log(ngx.ERR, "post_consumer_key set_rate_limiting_plugin error: ", err)
+    end
   end
 end
 
-local function do_authentication(conf)
+local function do_authentication(conf, api_name)
   if type(conf.key_names) ~= "table" then
     ngx.log(ngx.ERR, "[key-auth-redis] no conf.key_names set, aborting plugin execution")
     return false, {status = 500, message= "Invalid plugin configuration"}
@@ -167,6 +256,7 @@ local function do_authentication(conf)
   if not credential then
     -- 查询redis
     local cred, err = red:get(key)
+    ngx.log(ngx.INFO, "cred: ", cred)
     if not cred or cred == ngx.null then
       return false, {status = 403, message = "Invalid authentication credentials"}
     else
@@ -180,7 +270,7 @@ local function do_authentication(conf)
         ngx.log(ngx.ERR, "consumer err: ", err)
       else
         -- 向已生成的consumer添加key-auth
-        post_consumer_key(consumer_uuid, key)
+        post_consumer_key(conf, consumer_uuid, key, api_name)
       end
       return true
     end
@@ -198,10 +288,17 @@ local function do_authentication(conf)
     return responses.send_HTTP_INTERNAL_SERVER_ERROR(err)
   end
   set_consumer(consumer, credential)
+  -- 添加rate-limiting插件
 
   return true
 end
 
+-- string split 
+local function string_split(str, p)
+  local rt= {}
+  string.gsub(str, '[^'..p..']+', function(w) table.insert(rt, w) end )
+  return rt
+end 
 
 function KeyAuthHandler:access(conf)
   KeyAuthHandler.super.access(self)
@@ -212,7 +309,17 @@ function KeyAuthHandler:access(conf)
     return
   end
 
-  local ok, err = do_authentication(conf)
+  local api_name = nil
+  -- 获取request的 api_name
+  if conf.apiname_uri_lastest then
+    local uri = ngx.var.uri
+    local rt = string_split(uri, '/')
+    -- 取最后的productid
+    api_name = rt[#rt] 
+    ngx.log(ngx.INFO, "api_name: ", api_name)
+  end
+
+  local ok, err = do_authentication(conf, api_name)
   if not ok then
     if conf.anonymous ~= "" then
       -- get anonymous user
@@ -226,6 +333,7 @@ function KeyAuthHandler:access(conf)
       return responses.send(err.status, err.message)
     end
   end
+
 end
 
 
